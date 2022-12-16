@@ -3,7 +3,7 @@ import cv2
 import time
 import sys
 from pathlib import Path
-from utils import postprocess
+from utils import processing
 
 #todo consider making functions
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -60,7 +60,7 @@ stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 pd_nn.setBlobPath(PALM_DETECTION_MODEL)
 
 # nn_setup
-anchors, anchors_count = postprocess.create_SSD_anchors(PD_INPUT_SIZE)
+# anchors, anchors_count = postprocess.create_SSD_anchors(PD_INPUT_SIZE)
 
 # Linking depth
 monoL.out.link(stereo.left)
@@ -88,9 +88,12 @@ with dai.Device(pipeline) as device:
         videoFrame = video.get()
         disparityFrame = disparity.get()
         pd_output = pd.get()
-        hands = postprocess.pd_postprocess(pd_output, anchors, anchors_count, PD_INPUT_SIZE)
+        hands = postprocess.pd_postprocess(pd_output)  #, anchors, anchors_count, PD_INPUT_SIZE)
+        # print(hands)
         print(hands)
-        # print(pd_output)
+
+        # draw bboxes over palms
+        # cv2.copyMakeBorder(videoFrame, self.pad_h, self.pad_h, self.pad_w, self.pad_w, cv2.BORDER_CONSTANT)
 
         # Get BGR frame from NV12 encoded video frame to show with opencv
         cv2.imshow("video", videoFrame.getCvFrame())

@@ -126,8 +126,12 @@ def non_max_suppression(regions, nms_thresh):
     boxes = [[int(x * 1000) for x in r.pd_box] for r in regions]
     scores = [r.pd_score for r in regions]
     indices = cv2.dnn.NMSBoxes(boxes, scores, 0, nms_thresh)
-    return [regions[i[0]] for i in indices]
-
+    result = []
+    # todo fix that
+    if indices is not None:
+        for i in indices:
+            result.append(regions[i])
+    return result
 
 def normalize_radians(angle):
     return angle - 2 * pi * floor((angle + pi) / (2 * pi))
@@ -136,6 +140,8 @@ def normalize_radians(angle):
 def rot_vec(vec, rotation):
     vx, vy = vec
     return [vx * cos(rotation) - vy * sin(rotation), vx * sin(rotation) + vy * cos(rotation)]
+
+
 
 
 def detections_to_rect(regions):
