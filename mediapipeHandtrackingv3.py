@@ -15,6 +15,14 @@ JOINT_COLOR = [(0, 0, 0), (125, 255, 79),
             (255, 102, 0), (181, 70, 255),
             (13, 63, 255)]
 
+# depth var
+config = None
+newConfig = False
+topLeft = dai.Point2f(0.4, 0.4)
+bottomRight = dai.Point2f(0.6, 0.6)
+stepSize = 0.05
+points_storage = []
+
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
 def to_planar(arr: np.ndarray, shape: tuple) -> np.ndarray:
     resized = cv2.resize(arr, shape, interpolation=cv2.INTER_NEAREST).transpose(2,0,1)
@@ -92,7 +100,46 @@ class HandTracker:
         cam_out.setStreamName("cam_out")
         cam.preview.link(cam_out.input)
 
-        # todo stereocamera
+        # depth
+        monoLeft = pipeline.create(dai.node.MonoCamera)
+        monoRight = pipeline.create(dai.node.MonoCamera)
+        stereo = pipeline.create(dai.node.StereoDepth)
+        stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
+        stereo.setOutputSize(self.preview_width, self.preview_height)
+        spatialLocationCalculator = pipeline.create(dai.node.SpatialLocationCalculator)
+
+        xoutDepth = pipeline.create(dai.node.XLinkOut)
+        xoutSpatialData = pipeline.create(dai.node.XLinkOut)
+        xinSpatialCalcConfig = pipeline.create(dai.node.XLinkIn)
+
+        xoutDepth.setStreamName("depth")
+        xoutSpatialData.setStreamName("spatialData")
+        xinSpatialCalcConfig.setStreamName("spatialCalcConfig")
+
+        monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
+        monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+
+        # depth config
+        global config
+        config = dai.SpatialLocationCalculatorConfigData()
+        config.depthThresholds.lowerThreshold = 100
+        config.depthThresholds.upperThreshold = 10000
+        config.roi = dai.Rect(topLeft, bottomRight)
+
+        spatialLocationCalculator.inputConfig.setWaitForMessage(False)
+        spatialLocationCalculator.initialConfig.addROI(config)
+
+        # Linking
+        monoLeft.out.link(stereo.left)
+        monoRight.out.link(stereo.right)
+
+        spatialLocationCalculator.passthroughDepth.link(xoutDepth.input)
+        stereo.depth.link(spatialLocationCalculator.inputDepth)
+
+        spatialLocationCalculator.out.link(xoutSpatialData.input)
+        xinSpatialCalcConfig.out.link(spatialLocationCalculator.inputConfig)
 
         # palm detection
         pd_nn = pipeline.createNeuralNetwork()
@@ -237,32 +284,28 @@ class HandTracker:
 
             hand_bbox = [draw_min_x, draw_min_y, draw_max_x, draw_max_y]
 
-            xx = (draw_max_x+draw_min_x)//2
-            yy = (draw_max_y+draw_min_y)//2
 
-            # todo delete later
-            cv2.putText(frame, f"({xx - self.preview_width//2}, {yy - self.preview_height//2})", (xx, yy),
+            if self.show_hand_box:
+
+                cv2.rectangle(frame, (draw_min_x, draw_min_y), (draw_max_x, draw_max_y), (36, 152, 0), 2)
+                cv2.putText(frame, f"({int(x_center)}, {int(y_center)})", (int(x_center), int(y_center)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-
-            # if self.show_hand_box:
-            #
-            #     cv2.rectangle(frame, (draw_min_x, draw_min_y), (draw_max_x, draw_max_y), (36, 152, 0), 2)
-            #
-            #     palmar_text = ""
-            #     if region.handedness > 0.5:
-            #         palmar_text = "Right: "
-            #     else:
-            #         palmar_text = "Left: "
-            #     if palmar:
-            #         palmar_text = palmar_text + "Palmar"
-            #     else:
-            #         palmar_text = palmar_text + "Dorsal"
-                # self.ft.putText(img=frame, text=palmar_text, org=(draw_min_x + 1, draw_max_x + 15 + 1),
-                #                 fontHeight=14, color=(0, 0, 0), thickness=-1, line_type=cv2.LINE_AA,
-                #                 bottomLeftOrigin=True)
-                # self.ft.putText(img=frame, text=palmar_text, org=(draw_min_x, draw_max_x + 15), fontHeight=14,
-                #                 color=(255, 255, 255), thickness=-1, line_type=cv2.LINE_AA,
-                #                 bottomLeftOrigin=True)
+                global points_storage
+                # def mapping_val(old_val, old_min, old_max, new_min, new_max):
+                #     old_range = (old_max - old_min)
+                #     new_range = (new_max - new_min)
+                #     return (((old_val - old_min) * new_range) / old_range) + new_min
+                # points_storage = dict(topLeft=(mapping_val(draw_min_x, 0, 576, 0.05, 0.95),
+                #                                mapping_val(draw_max_y, 0, 324, 0.05, 0.95)),
+                #                       bottomRight=(mapping_val(draw_max_x, 0, 576, 0.05, 0.95),
+                #                                mapping_val(draw_min_y, 0, 324, 0.05, 0.95)))
+                # map values to
+                draw_min_x = draw_min_x/576
+                draw_max_y = draw_max_y/324
+                draw_max_x = draw_max_x/576
+                draw_min_y = draw_min_y/324
+                points_storage = dict(topLeft=(draw_min_x, draw_max_y),
+                                      bottomRight=(draw_max_x, draw_min_y))
 
         return cropped_frame, region.handedness, hand_bbox
 
@@ -275,6 +318,9 @@ class HandTracker:
         q_pd_out = device.getOutputQueue(name="pd_out", maxSize=4, blocking=True)
         q_lm_out = device.getOutputQueue(name="lm_out", maxSize=4, blocking=True)
         q_lm_in = device.getInputQueue(name="lm_in")
+        q_depth = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+        q_spatial_calc = device.getOutputQueue(name="spatialData", maxSize=4, blocking=False)
+        q_spatial_calc_conf = device.getInputQueue("spatialCalcConfig")
 
         while True:
             in_video = q_video.get()
@@ -312,60 +358,47 @@ class HandTracker:
                 inference = q_lm_out.get()
                 self.lm_postprocess(r, inference)
                 hand_frame, handedness, hand_bbox = self.lm_render(video_frame, annotated_frame, r)
-                # # ASL recognition
-                # if hand_frame is not None and self.asl_recognition:
-                #     hand_frame = cv2.resize(hand_frame, (self.asl_input_length, self.asl_input_length),
-                #                             interpolation=cv2.INTER_NEAREST)
-                #     hand_frame = hand_frame.transpose(2, 0, 1)
-                #     nn_data = dai.NNData()
-                #     nn_data.setLayer("input", hand_frame)
-                #     q_asl_in.send(nn_data)
-                #     asl_result = np.array(q_asl_out.get().getFirstLayerFp16())
-                #     asl_idx = np.argmax(asl_result)
-                #     # Recognized ASL character is associated with a probability
-                #     asl_char = [characters[asl_idx], round(asl_result[asl_idx] * 100, 1)]
-                #     selected_char = asl_char
-                #     current_char_queue = None
-                #     if handedness > 0.5:
-                #         current_char_queue = self.right_char_queue
-                #     else:
-                #         current_char_queue = self.left_char_queue
-                #     current_char_queue.append(selected_char)
-                #     # Peform filtering of recognition resuls using the previous 5 results
-                #     # If there aren't enough reults, take the first result as output
-                #     if len(current_char_queue) < 5:
-                #         selected_char = current_char_queue[0]
-                #     else:
-                #         char_candidate = {}
-                #         for i in range(5):
-                #             if current_char_queue[i][0] not in char_candidate:
-                #                 char_candidate[current_char_queue[i][0]] = [1, current_char_queue[i][1]]
-                #             else:
-                #                 char_candidate[current_char_queue[i][0]][0] += 1
-                #                 char_candidate[current_char_queue[i][0]][1] += current_char_queue[i][1]
-                #         most_voted_char = ""
-                #         max_votes = 0
-                #         most_voted_char_prob = 0
-                #         for key in char_candidate:
-                #             if char_candidate[key][0] > max_votes:
-                #                 max_votes = char_candidate[key][0]
-                #                 most_voted_char = key
-                #                 most_voted_char_prob = round(char_candidate[key][1] / char_candidate[key][0], 1)
-                #         selected_char = (most_voted_char, most_voted_char_prob)
-
-                # if self.show_asl:
-                #     gesture_string = "Letter: " + selected_char[0] + ", " + str(selected_char[1]) + "%"
-                #     textSize = self.ft.getTextSize(gesture_string, fontHeight=14, thickness=-1)[0]
-                #     cv2.rectangle(video_frame, (hand_bbox[0] - 5, hand_bbox[1]),
-                #                   (hand_bbox[0] + textSize[0] + 5, hand_bbox[1] - 18), (36, 152, 0), -1)
-                #     self.ft.putText(img=video_frame, text=gesture_string, org=(hand_bbox[0], hand_bbox[1] - 5),
-                #                     fontHeight=14, color=(255, 255, 255), thickness=-1, line_type=cv2.LINE_AA,
-                #                     bottomLeftOrigin=True)
 
 
+            # depthmap
+            inDepth = q_depth.get()  # Blocking call, will wait until a new data has arrived
+
+            depthFrame = inDepth.getFrame()  # depthFrame values are in millimeters
+
+            depthFrameColor = cv2.normalize(depthFrame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+            depthFrameColor = cv2.equalizeHist(depthFrameColor)
+            depthFrameColor = cv2.applyColorMap(depthFrameColor, cv2.COLORMAP_HOT)
+
+            spatialData = q_spatial_calc.get().getSpatialLocations()
+            for depthData in spatialData:
+                roi = depthData.config.roi
+                roi = roi.denormalize(width=depthFrameColor.shape[1], height=depthFrameColor.shape[0])
+                xmin = int(roi.topLeft().x)
+                ymin = int(roi.topLeft().y)
+                xmax = int(roi.bottomRight().x)
+                ymax = int(roi.bottomRight().y)
+
+                depthMin = depthData.depthMin
+                depthMax = depthData.depthMax
+
+                fontType = cv2.FONT_HERSHEY_TRIPLEX
+                cv2.rectangle(depthFrameColor, (xmin, ymin), (xmax, ymax), (255,255,255),
+                              cv2.FONT_HERSHEY_SCRIPT_SIMPLEX)
+                cv2.putText(depthFrameColor, f"X: {int(depthData.spatialCoordinates.x)} mm", (xmin + 10, ymin + 20),
+                            fontType, 0.5, (255, 255, 255))
+                cv2.putText(depthFrameColor, f"Y: {int(depthData.spatialCoordinates.y)} mm", (xmin + 10, ymin + 35),
+                            fontType, 0.5, (255, 255, 255))
+                cv2.putText(depthFrameColor, f"Z: {int(depthData.spatialCoordinates.z)} mm", (xmin + 10, ymin + 50),
+                            fontType, 0.5, (255, 255, 255))
+            # Show the frame
+            cv2.imshow("depth", depthFrameColor)
 
             video_frame = video_frame[self.pad_h:self.pad_h + h, self.pad_w:self.pad_w + w]
             cv2.imshow("hand tracker", video_frame)
+
+            global newConfig
+            global points_storage
+
             key = cv2.waitKey(1)
             if key == ord('q') or key == 27:
                 break
@@ -376,8 +409,48 @@ class HandTracker:
                 self.show_hand_box = not self.show_hand_box
             elif key == ord('2'):
                 self.show_landmarks = not self.show_landmarks
+            # elif key == ord('w'):
+            #     if topLeft.y - stepSize >= 0:
+            #         topLeft.y -= stepSize
+            #         bottomRight.y -= stepSize
+            #         newConfig = True
+            # elif key == ord('a'):
+            #     if topLeft.x - stepSize >= 0:
+            #         topLeft.x -= stepSize
+            #         bottomRight.x -= stepSize
+            #         newConfig = True
+            # elif key == ord('s'):
+            #     if bottomRight.y + stepSize <= 1:
+            #         topLeft.y += stepSize
+            #         bottomRight.y += stepSize
+            #         newConfig = True
+            # elif key == ord('d'):
+            #     if bottomRight.x + stepSize <= 1:
+            #         topLeft.x += stepSize
+            #         bottomRight.x += stepSize
+            #         newConfig = True
 
+            if points_storage:
+                # xdiff = abs(bottomRight.x - topLeft.x)
+                # ydiff = abs(topLeft.y - bottomRight.y)
+                # topLeft.x = int(points_storage[0] - xdiff)
+                # topLeft.y = int(points_storage[1] + ydiff)
+                # bottomRight.x = int(points_storage[0] + xdiff)
+                # bottomRight.y = int(points_storage[1] - ydiff)
+                topLeft = dai.Point2f(points_storage["topLeft"][0], points_storage["topLeft"][1])
+                bottomRight = dai.Point2f(points_storage["bottomRight"][0],points_storage["bottomRight"][1])
+                newConfig = True
+                print(points_storage)
+            # print(topLeft.x, " ", topLeft.y)
+            # print(bottomRight.x, " ", bottomRight.y)
 
+            if newConfig:
+                config.roi = dai.Rect(topLeft, bottomRight)
+                config.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.AVERAGE
+                cfg = dai.SpatialLocationCalculatorConfig()
+                cfg.addROI(config)
+                q_spatial_calc_conf.send(cfg)
+                newConfig = False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -389,72 +462,4 @@ if __name__ == "__main__":
 
     ht = HandTracker(pd_path=args.pd_m, lm_path=args.lm_m)
     ht.run()
-
-
-
-
-# # Define source
-# color = pipeline.createColorCamera()
-# pd_nn = pipeline.createNeuralNetwork()
-#
-# # Define output
-#
-# # Video stream
-# xoutVideo = pipeline.createXLinkOut()
-# # Hand detection (open/closed + location)
-# xoutPD = pipeline.createXLinkOut()
-#
-#
-# # Name streams
-# xoutVideo.setStreamName("video")
-# xoutPD.setStreamName("palm detection")
-#
-# # Properties
-# color.setPreviewSize(128, 128)
-# color.setBoardSocket(dai.CameraBoardSocket.RGB)
-# color.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-# color.setInterleaved(False)
-# color.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-# color.setPreviewSize(self.pd, PD_INPUT_SIZE)
-#
-# # Neural Network properties
-# pd_nn.setBlobPath(PALM_DETECTION_MODEL)
-#
-# # nn_setup
-# # anchors, anchors_count = postprocess.create_SSD_anchors(PD_INPUT_SIZE)
-#
-#
-# # Link nn
-# color.preview.link(pd_nn.input)
-# pd_nn.out.link(xoutPD.input)
-#
-#
-# # Linking RGB
-# color.video.link(xoutVideo.input)
-# # color.video.link(resize)
-
-
-# with dai.Device(pipeline) as device:
-#
-#     # output queue
-#     video = device.getOutputQueue('video')
-#     pd = device.getOutputQueue('palm detection')
-#
-#     bboxes = []
-#
-#     while True:
-#         videoFrame = video.get()
-#         nn_output = pd.get()
-#
-#         if nn_output is not None:
-#
-#             # nn output consists of classificators and regressors
-#             scores = np.array(nn_output.getLayerFp16("classificators"))
-#             bboxes = np.array(nn_output.getLayerFp16("regressors")).reshape((896, 18))
-#
-#         # Get BGR frame from NV12 encoded video frame to show with opencv
-#         cv2.imshow("video", videoFrame.getCvFrame())
-#
-#         if cv2.waitKey(1) == ord('q'):
-#             break
 
