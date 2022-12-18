@@ -324,11 +324,14 @@ class HandTracker:
                 draw_max_y = abs(draw_max_y - 2 * draw_size) / 324
                 draw_max_x = draw_max_x / 576
                 draw_min_y = abs(draw_min_y - 2 * draw_size) / 324
+                x_center = (x_center - draw_size) / 576
+                y_center = (y_center - draw_size) / 576
 
-                points_storage = dict(topLeft=(draw_min_x, draw_max_y),
-                                      bottomRight=(draw_max_x, draw_min_y))
+                points_storage = dict(topLeft=(draw_min_x, draw_min_y),
+                                      bottomRight=(draw_max_x, draw_max_y),
+                                      center=(x_center, y_center))
 
-                print(draw_min_x, draw_min_y, draw_max_x, draw_max_y)
+                # print(draw_min_x, draw_min_y, draw_max_x, draw_max_y)
 
                 global hand_pos
                 x = x_center / 576
@@ -442,8 +445,8 @@ class HandTracker:
                         fontType, 0.5, (0, 255, 0))
             cv2.putText(video_frame, f"Z: {int(depthData.spatialCoordinates.z)} mm", (xmin + 10, ymin + 50),
                         fontType, 0.5, (0, 255, 0))
-            cv2.putText(video_frame, f"Deteced fist: {fist_detected}", (50,50), cv2.FONT_HERSHEY_SIMPLEX,
-                        1, (0,255,0))
+            # cv2.putText(video_frame, f"Deteced fist: {fist_detected}", (50,50), cv2.FONT_HERSHEY_SIMPLEX,
+            #             1, (0,255,0))
 
             cv2.imshow("hand tracker", video_frame)
 
@@ -494,10 +497,14 @@ class HandTracker:
                 newConfig = True
 
 
+
             if newConfig:
 
-                config.roi = dai.Rect(topLeft, bottomRight)
+                # config.roi = dai.Rect(topLeft, bottomRight)
                 # config.roi = dai.Rect(center, size_roi)
+                center_x = points_storage["center"][0]
+                center_y = points_storage["center"][1]
+                config.roi = dai.Rect(dai.Point2f(center_x + 0.05,center_y + 0.05), dai.Size2f(0.01, 0.016))
 
                 config.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.AVERAGE
                 cfg = dai.SpatialLocationCalculatorConfig()
@@ -510,30 +517,71 @@ def delta_loop():
     global hand_pos
     i = 0
     while True:
-        if hand_pos and fist_detected:
+        #fist detected
+        if hand_pos:
 
             # x_norm_int = hand_pos[0] * 6000 - 3000
             # y_norm_int = hand_pos[1] * 6000 - 3000
+            print(points_xyz)
             x_norm_int = points_xyz[0]
             y_norm_int = points_xyz[1]
-            z_norm_int = -abs(points_xyz[2]) - 5000
-            if z_norm_int > -4000:
-                z_norm_int = -4000
-            elif z_norm_int < -7000:
-                z_norm_int = -7000
+            z_norm_int = points_xyz[2]
+            print(x_norm_int, y_norm_int, z_norm_int)
+
+            def normalize_z(z):
+                old_min = 700
+                old_max = 1200
+                old_range = old_max - old_min
+                new_max = -4000
+                new_min = -7000
+                new_range = new_max - new_min
+                new_value = (((z - old_min) * new_range) / old_range) + new_min
+                return int(new_value)
+
+
+            if x_norm_int > 300:
+                x_norm_int = 300
+            elif x_norm_int < -300:
+                x_norm_int = -300
+
+            if y_norm_int > 300:
+                y_norm_int = 300
+            elif y_norm_int < -300:
+                y_norm_int = -300
+
+            if z_norm_int > 1200:
+                z_norm_int = 1200
+            elif z_norm_int < 700:
+                z_norm_int = 700
+
+            z_norm_int = normalize_z(z_norm_int)
+
             if x_norm_int >= 0:
-                x_norm = "-" + str(int(abs(hand_pos[0] * 6000 - 3000))).zfill(4)
+                x_num = abs(int(x_norm_int * 10))
+                if x_num == 0:
+                    continue
+                x_norm = "-" + str(x_num).zfill(4)
             else:
-                x_norm = "+" + str(abs(int(hand_pos[0] * 6000 - 3000))).zfill(4)
+                x_num = abs(int(x_norm_int * 10))
+                if x_num == 0:
+                    continue
+                x_norm = "+" + str(x_num).zfill(4)
 
             if y_norm_int >= 0:
-                y_norm = "-" + str(int(hand_pos[1] * 6000 - 3000)).zfill(4)
+                y_num = abs(int(y_norm_int * 10))
+                if y_num == 0:
+                    continue
+                y_norm = "-" + str(y_num).zfill(4)
             else:
-                y_norm = "+" + str(int(hand_pos[1] * 6000 - 3000)).zfill(4)
+                y_num = abs(int(y_norm_int * 10))
+                if y_num == 0:
+                    continue
+                y_norm = "+" + str(y_num).zfill(4)
 
-            command = f"JNT{x_norm}{y_norm}-{str(abs(z_norm_int))}TOOL_V0010"
+            command = f"LIN{x_norm}{y_norm}-{str(abs(z_norm_int))}TOOL_V0010"
             # print(points_xyz)
             print(command)
+
 
             if i == 0:
                 delta_sock.send(command.encode())
@@ -542,7 +590,7 @@ def delta_loop():
                 prev_z = z_norm_int
                 delta_sock.recv(len(command))
                 i = 1
-            if sqrt( abs(prev_x - x_norm_int) ** 2 + abs(prev_y - y_norm_int)**2 + abs(prev_z - z_norm_int)**2 ) > 300:
+            if sqrt( abs(prev_x - x_norm_int) ** 2 + abs(prev_y - y_norm_int)**2 + abs(prev_z - z_norm_int)** 2) > 50:
                 delta_sock.send(command.encode())
                 prev_x = x_norm_int
                 prev_y = y_norm_int
@@ -647,6 +695,7 @@ args = parser.parse_args()
 """ Delta communcation part"""
 
 # variables used to
+# delta_host, delta_port = HOST, PORT = "localhost", 2137
 delta_host, delta_port = HOST, PORT = "192.168.0.155", 10
 home_pos = "-2000-2000-4500"
 hover_height = "-4000"
