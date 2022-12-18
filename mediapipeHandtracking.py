@@ -572,8 +572,8 @@ args = parser.parse_args()
 """ Delta communication part"""
 
 # variables used to
-# delta_host, delta_port = HOST, PORT = "localhost", 2137 used for robot simulation
-delta_host, delta_port = HOST, PORT = "192.168.0.155", 10
+delta_host, delta_port = HOST, PORT = "localhost", 2137 # used for robot simulation
+# delta_host, delta_port = HOST, PORT = "192.168.0.155", 10
 home_pos = "-2000-2000-4500"
 hover_height = "-4000"
 
