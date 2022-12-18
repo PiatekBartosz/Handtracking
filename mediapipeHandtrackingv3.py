@@ -29,6 +29,7 @@ topLeft = dai.Point2f(0.4, 0.4)
 bottomRight = dai.Point2f(0.6, 0.6)
 stepSize = 0.05
 points_storage = {}
+fist_detected = False
 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -57,7 +58,7 @@ SSDAnchorOptions = namedtuple('SSDAnchorOptions', [
 class HandTracker:
     def __init__(self,
                  pd_path="models/palm_detection_6_shaves.blob",
-                 pd_score_thresh=0.5, pd_nms_thresh=0.3,
+                 pd_score_thresh=0.65, pd_nms_thresh=0.3,
                  lm_path="models/hand_landmark_6_shaves.blob",
                  lm_score_threshold=0.5,
                  show_landmarks=True,
@@ -93,6 +94,7 @@ class HandTracker:
         self.preview_height = 324
         self.hand_middle = None
         self.hand_text_placement = None
+
 
         self.frame_size = None
 
@@ -232,6 +234,15 @@ class HandTracker:
                     else:
                         cv2.polylines(frame, palm_line, False, (128, 128, 128), 2, cv2.LINE_AA)
 
+                # detect fist
+                global fist_detected
+                if lm_xy[8][1] > lm_xy[5][1] or lm_xy[12][1] > lm_xy[9][1] or lm_xy[16][1] > lm_xy[13][1] \
+                        or lm_xy[20][1] > lm_xy[17][1]:
+                    fist_detected = True
+                # else:
+                #     fist_detected = False
+
+
                 # Draw line for each finger
                 for i in range(len(list_connections)):
                     finger = list_connections[i]
@@ -308,11 +319,12 @@ class HandTracker:
                 #                                mapping_val(draw_max_y, 0, 324, 0.05, 0.95)),
                 #                       bottomRight=(mapping_val(draw_max_x, 0, 576, 0.05, 0.95),
                 #                                mapping_val(draw_min_y, 0, 324, 0.05, 0.95)))
-                # map values to
+                # delete offset
                 draw_min_x = draw_min_x / 576
-                draw_max_y = abs(draw_max_y - 2*draw_size) / 324
+                draw_max_y = abs(draw_max_y - 2 * draw_size) / 324
                 draw_max_x = draw_max_x / 576
-                draw_min_y = abs(draw_min_y-2*draw_size) / 324
+                draw_min_y = abs(draw_min_y - 2 * draw_size) / 324
+
                 points_storage = dict(topLeft=(draw_min_x, draw_max_y),
                                       bottomRight=(draw_max_x, draw_min_y))
 
@@ -349,6 +361,8 @@ class HandTracker:
         while True:
             in_video = q_video.get()
             video_frame = in_video.getCvFrame()
+            global fist_detected
+            fist_detected = False
 
             h, w = video_frame.shape[:2]
             self.frame_size = max(h, w)
@@ -416,10 +430,21 @@ class HandTracker:
                             fontType, 0.5, (0, 255, 0))
                 cv2.putText(depthFrameColor, f"Z: {int(depthData.spatialCoordinates.z)} mm", (xmin + 10, ymin + 50),
                             fontType, 0.5, (0, 255, 0))
+
             # Show the frame
             cv2.imshow("depth", depthFrameColor)
 
             video_frame = video_frame[self.pad_h:self.pad_h + h, self.pad_w:self.pad_w + w]
+
+            cv2.putText(video_frame, f"X: {int(depthData.spatialCoordinates.x)} mm", (xmin + 10, ymin + 20),
+                        fontType, 0.5, (0, 255, 0))
+            cv2.putText(video_frame, f"Y: {int(depthData.spatialCoordinates.y)} mm", (xmin + 10, ymin + 35),
+                        fontType, 0.5, (0, 255, 0))
+            cv2.putText(video_frame, f"Z: {int(depthData.spatialCoordinates.z)} mm", (xmin + 10, ymin + 50),
+                        fontType, 0.5, (0, 255, 0))
+            cv2.putText(video_frame, f"Deteced fist: {fist_detected}", (50,50), cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (0,255,0))
+
             cv2.imshow("hand tracker", video_frame)
 
             global newConfig
@@ -435,43 +460,45 @@ class HandTracker:
                 self.show_hand_box = not self.show_hand_box
             elif key == ord('2'):
                 self.show_landmarks = not self.show_landmarks
-            elif key == ord('w'):
-                if topLeft.y - stepSize >= 0:
-                    topLeft.y -= stepSize
-                    bottomRight.y -= stepSize
-                    newConfig = True
-            elif key == ord('a'):
-                if topLeft.x - stepSize >= 0:
-                    topLeft.x -= stepSize
-                    bottomRight.x -= stepSize
-                    newConfig = True
-            elif key == ord('s'):
-                if bottomRight.y + stepSize <= 1:
-                    topLeft.y += stepSize
-                    bottomRight.y += stepSize
-                    newConfig = True
-            elif key == ord('d'):
-                if bottomRight.x + stepSize <= 1:
-                    topLeft.x += stepSize
-                    bottomRight.x += stepSize
-                    newConfig = True
+
+            # elif key == ord('w'):
+            #     if topLeft.y - stepSize >= 0:
+            #         topLeft.y -= stepSize
+            #         bottomRight.y -= stepSize
+            #         newConfig = True
+            # elif key == ord('a'):
+            #     if topLeft.x - stepSize >= 0:
+            #         topLeft.x -= stepSize
+            #         bottomRight.x -= stepSize
+            #         newConfig = True
+            # elif key == ord('s'):
+            #     if bottomRight.y + stepSize <= 1:
+            #         topLeft.y += stepSize
+            #         bottomRight.y += stepSize
+            #         newConfig = True
+            # elif key == ord('d'):
+            #     if bottomRight.x + stepSize <= 1:
+            #         topLeft.x += stepSize
+            #         bottomRight.x += stepSize
+            #         newConfig = True
 
             if points_storage:
-                # xdiff = abs(bottomRight.x - topLeft.x)
-                # ydiff = abs(topLeft.y - bottomRight.y)
-                # topLeft.x = int(points_storage[0] - xdiff)
-                # topLeft.y = int(points_storage[1] + ydiff)
-                # bottomRight.x = int(points_storage[0] + xdiff)
-                # bottomRight.y = int(points_storage[1] - ydiff)
+
+                # working for two points on diagonal
                 topLeft = dai.Point2f(points_storage["topLeft"][0], points_storage["topLeft"][1])
-                bottomRight = dai.Point2f(points_storage["bottomRight"][0],points_storage["bottomRight"][1])
+                bottomRight = dai.Point2f(points_storage["bottomRight"][0], points_storage["bottomRight"][1])
+                # center_x = points_storage["center_offset"][0]
+                # center_y = points_storage["center_offset"][1]
+                # center = dai.Point2f(center_x, center_y)
+                # size_roi = dai.Size2f(0.1, 0.1)
                 newConfig = True
-            #     print(points_storage)
-            # print(topLeft.x, " ", topLeft.y)
-            # print(bottomRight.x, " ", bottomRight.y)
+
 
             if newConfig:
+
                 config.roi = dai.Rect(topLeft, bottomRight)
+                # config.roi = dai.Rect(center, size_roi)
+
                 config.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.AVERAGE
                 cfg = dai.SpatialLocationCalculatorConfig()
                 cfg.addROI(config)
@@ -483,13 +510,13 @@ def delta_loop():
     global hand_pos
     i = 0
     while True:
-        if hand_pos:
+        if hand_pos and fist_detected:
 
             # x_norm_int = hand_pos[0] * 6000 - 3000
             # y_norm_int = hand_pos[1] * 6000 - 3000
             x_norm_int = points_xyz[0]
-            y_norm_int = points_xyz[0]
-            z_norm_int = -abs(points_xyz[0]) - 5000
+            y_norm_int = points_xyz[1]
+            z_norm_int = -abs(points_xyz[2]) - 5000
             if z_norm_int > -4000:
                 z_norm_int = -4000
             elif z_norm_int < -7000:
@@ -583,7 +610,6 @@ def execute_command(command):
 
             offsets = [abs(set_x - curr_x), abs(set_y - curr_y), abs(set_z - curr_z)]
 
-            # todo consider checking for moving
             if max(offsets) <= offset_threshold:
                 break
     elif prefix == "TIM":
